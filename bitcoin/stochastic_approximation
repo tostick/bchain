@@ -1,0 +1,182 @@
+#include <map>
+#include <set>
+#include <vector>
+#include <iostream>
+#include <algorithm>
+using namespace std;
+
+typedef long long  int64;
+typedef unsigned long long  uint64;
+
+#define _I64_MAX 100000000000000
+
+class CWalletTx
+{
+public:
+
+    CWalletTx()
+    {
+        Init();
+    }
+
+    char fSpent;
+
+    bool IsFinal() const
+    {
+        return true;
+    }
+
+    int64 GetCredit() const
+    {
+        return value;
+    }
+
+    void setValue(int val)
+    {
+        value = val;
+    }
+
+    void Init()
+    {
+        fSpent = false;
+        value = 0;
+    }
+
+private:
+    int64 value;
+
+};
+
+bool SelectCoins(int64 nTargetValue, set<CWalletTx*>& setCoinsRet)
+{
+    setCoinsRet.clear();
+
+    int64 nLowestLarger = _I64_MAX;
+    CWalletTx* pcoinLowestLarger = NULL;
+    vector<pair<int64, CWalletTx*> > vValue;
+    int64 nTotalLower = 0;
+
+    {
+        for (map<uint64, CWalletTx>::iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
+        {
+            CWalletTx* pcoin = &(*it).second;
+            if (!pcoin->IsFinal() || pcoin->fSpent)
+                continue;
+            int64 n = pcoin->GetCredit();
+            if (n <= 0)
+                continue;
+            if (n < nTargetValue)
+            {
+                vValue.push_back(make_pair(n, pcoin));
+                nTotalLower += n;
+            }
+            else if (n == nTargetValue)
+            {
+                setCoinsRet.insert(pcoin);
+                cout << "total:" << n << endl;
+                return true;
+            }
+            else if (n < nLowestLarger)
+            {
+                nLowestLarger = n;
+                pcoinLowestLarger = pcoin;
+            }
+        }
+    }
+
+    if (nTotalLower < nTargetValue)
+    {
+        if (pcoinLowestLarger == NULL)
+        {
+            cout << "not found"<< endl;
+            return false;
+        }
+        setCoinsRet.insert(pcoinLowestLarger);
+        cout << "total:" << nTargetValue  << endl;
+        return true;
+    }
+
+    sort(vValue.rbegin(), vValue.rend());
+    vector<char> vfIncluded;
+    vector<char> vfBest(vValue.size(), true);
+    int64 nBest = nTotalLower;
+
+    for (int nRep = 0; nRep < 10 && nBest != nTargetValue; nRep++)
+    {
+        vfIncluded.assign(vValue.size(), false);
+        int64 nTotal = 0;
+        bool fReachedTarget = false;
+        for (unsigned int nPass = 0; nPass < 2 && !fReachedTarget; nPass++)
+        {
+            for (unsigned int i = 0; i < vValue.size(); i++)
+            {
+                if (nPass == 0 ? rand() % 2 : !vfIncluded[i])
+                {
+                    nTotal += vValue[i].first;
+                    vfIncluded[i] = true;
+                    if (nTotal >= nTargetValue)
+                    {
+                        fReachedTarget = true;
+                        if (nTotal < nBest)
+                        {
+                            nBest = nTotal;
+                            vfBest = vfIncluded;
+                        }
+                        nTotal -= vValue[i].first;
+                        vfIncluded[i] = false;
+                    }
+                }
+            }
+        }
+    }
+
+    if (pcoinLowestLarger && nLowestLarger - nTargetValue <= nBest - nTargetValue)
+        setCoinsRet.insert(pcoinLowestLarger);
+    else
+    {
+        for (unsigned int i = 0; i < vValue.size(); i++)
+            if (vfBest[i])
+                setCoinsRet.insert(vValue[i].second);
+
+        cout << "SelectCoins() best subset: " << endl;
+        for (int i = 0; i < vValue.size(); i++)
+            if (vfBest[i])
+                cout << vValue[i].first << " ";
+        cout << endl;
+        cout << "total:" << nBest << endl;
+    }
+    return true;
+}
+
+
+int main()
+{
+    unsigned int i =0;
+    int64 nValue = 111;
+    set<CWalletTx*> setCoins;
+
+    for (i = 0; i < 100; i++)
+    {
+        CWalletTx walletTx;
+        walletTx.setValue(rand()%6+1);
+        mapWallet.insert(pair<int, CWalletTx>(i, walletTx));
+    }
+
+    SelectCoins(111, setCoins);
+    SelectCoins(5, setCoins);
+    SelectCoins(22, setCoins);
+    SelectCoins(6785, setCoins);
+
+    return 0;
+}
+
+
+[root@iZwz9a9kyixoqvys89ewj4Z selectNumbers]# ./a.out 
+SelectCoins() best subset: 
+6 6 6 6 6 5 5 5 5 5 5 5 5 4 4 4 4 4 4 4 4 4 4 1 
+total:111
+total:5
+SelectCoins() best subset: 
+6 6 6 4 
+total:22
+not found
