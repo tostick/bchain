@@ -1,0 +1,100 @@
+bool SelectCoins(int64 nTargetValue, set<CWalletTx*>& setCoinsRet)
+{
+    setCoinsRet.clear();   清空存放交易记录的set
+
+    // List of values less than target
+    int64 nLowestLarger = _I64_MAX;   保存最大的金额值
+    CWalletTx* pcoinLowestLarger = NULL;   保存金额大于nTargetValue 所有值中的最小值
+    vector<pair<int64, CWalletTx*> > vValue;  保存满足要求的交易记录，允许key重复（即候选对象）
+    int64 nTotalLower = 0;      存放小于nTargetValue的所有值之和
+
+    CRITICAL_BLOCK(cs_mapWallet)
+    {
+        for (map<uint256, CWalletTx>::iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)  循环遍历钱包中的所有交易
+        {
+            CWalletTx* pcoin = &(*it).second;         选取钱包的交易
+            if (!pcoin->IsFinal() || pcoin->fSpent)   判断该交易是否结束或者被花费
+                continue;                             如果是，则取出下一条记录
+            int64 n = pcoin->GetCredit();             获取记录可用金额
+            if (n <= 0)                               可用金额小于0，则取出下一条记录
+                continue;
+            if (n < nTargetValue)                     如果该记录的金额小于目标值
+            {
+                vValue.push_back(make_pair(n, pcoin)); 保存为候选对象
+                nTotalLower += n;                      总金额累加
+            }
+            else if (n == nTargetValue)               如果该记录的金额等于目标值
+            {
+                setCoinsRet.insert(pcoin);            保存并直接返回
+                return true;
+            }
+            else if (n < nLowestLarger)               如果该记录金额大于目标值，且该值小于已登记的值
+            {
+                nLowestLarger = n;                    替换金额
+                pcoinLowestLarger = pcoin;            替换记录对象
+            }
+        }
+    }
+
+    if (nTotalLower < nTargetValue)                   如果小于的目标值的和值小于目标值
+    {
+        if (pcoinLowestLarger == NULL)                没有找到大于目标值的对象，则查找失败
+            return false;
+        setCoinsRet.insert(pcoinLowestLarger);        将大于目标值的对象返回
+        return true;
+    }
+
+    // Solve subset sum by stochastic approximation
+    sort(vValue.rbegin(), vValue.rend());             对小于目标值的所有key进行排序
+    vector<char> vfIncluded;                          排除标志符
+    vector<char> vfBest(vValue.size(), true);         最优记录标志符
+    int64 nBest = nTotalLower;                        最优值，该值将动态调整
+
+    for (int nRep = 0; nRep < 1000 && nBest != nTargetValue; nRep++)   操作1000次，如果最优值等于目标值或者1000次结束，则退出循环
+    {
+        vfIncluded.assign(vValue.size(), false);      排除标志符设为false
+        int64 nTotal = 0;                             总数为0
+        bool fReachedTarget = false;                  找到合适对象设为false
+        for (int nPass = 0; nPass < 2 && !fReachedTarget; nPass++)  进行两次操作，当两次操作完成或者找到合适对象时退出循环
+        {
+            for (int i = 0; i < vValue.size(); i++)   遍历所有小于目标值的对象
+            {
+                if (nPass == 0 ? rand() % 2 : !vfIncluded[i]) 第一次操作采取随机抽取，第二次操作针对第一次没有随机抽取到的对象操作
+                {
+                    nTotal += vValue[i].first;          累加值
+                    vfIncluded[i] = true;               标识为已使用
+                    if (nTotal >= nTargetValue)         如果总数大于目标值
+                    {
+                        fReachedTarget = true;          发现目标
+                        if (nTotal < nBest)             该目标比以往发现的目标好
+                        {
+                            nBest = nTotal;             替换为最好目标
+                            vfBest = vfIncluded;        保存相应的对象
+                        }
+                        nTotal -= vValue[i].first;      放弃该对象，寻找下一对象
+                        vfIncluded[i] = false;          该对象值为false，便于第二次随机抽取使用（？？？）
+                    }
+                }
+            }
+        }
+    }
+
+    // If the next larger is still closer, return it
+    if (pcoinLowestLarger && nLowestLarger - nTargetValue <= nBest - nTargetValue)   最大值对象比累加对象要好
+        setCoinsRet.insert(pcoinLowestLarger);   返回最大对象
+    else
+    {
+        for (int i = 0; i < vValue.size(); i++)  循环候选对象
+            if (vfBest[i])
+                setCoinsRet.insert(vValue[i].second);  取出合适对象
+
+        //// debug print
+        printf("SelectCoins() best subset: ");
+        for (int i = 0; i < vValue.size(); i++)
+            if (vfBest[i])
+                printf("%s ", FormatMoney(vValue[i].first).c_str());
+        printf("total %s\n", FormatMoney(nBest).c_str());
+    }
+
+    return true;
+}
